@@ -3,20 +3,25 @@
 import * as PIXI from 'pixi.js-legacy';
 import ViewPosition from './ViewPosition';
 import { type TileMapTileSelection } from './TileSetVisualizer';
+import panable, { type PanMoveEvent } from '../Utils/PixiSimpleGesture/pan';
 
 type Coordinates = {| x: number, y: number |};
 
 type Props = {|
   viewPosition: ViewPosition,
   getTileMapTileSelection: () => ?TileMapTileSelection,
+  onPanMove: (deltaX: number, deltaY: number, x: number, y: number) => void,
   onClick: (scenePathCoordinates: Array<Coordinates>) => void,
+  onInterceptPointerMove: () => void,
 |};
 
 class ClickInterceptor {
   viewPosition: ViewPosition;
   getTileMapTileSelection: () => ?TileMapTileSelection;
+  onPanMove: (deltaX: number, deltaY: number, x: number, y: number) => void;
   onClick: (scenePathCoordinates: Array<Coordinates>) => void;
   pointerPathCoordinates: ?Array<Coordinates>;
+  onInterceptPointerMove: () => void;
   _shouldCancelClick: boolean = false;
   _isIntercepting: boolean = false;
   _touchingPointerIds: Set<number> = new Set();
@@ -25,14 +30,32 @@ class ClickInterceptor {
   pixiContainer: PIXI.Container;
   interceptingSprite: PIXI.sprite;
 
-  constructor({ viewPosition, getTileMapTileSelection, onClick }: Props) {
+  constructor({
+    viewPosition,
+    getTileMapTileSelection,
+    onClick,
+    onPanMove,
+    onInterceptPointerMove,
+  }: Props) {
     this.viewPosition = viewPosition;
     this.onClick = onClick;
+    this.onPanMove = onPanMove;
+    this.onInterceptPointerMove = onInterceptPointerMove;
     this.getTileMapTileSelection = getTileMapTileSelection;
     this.interceptingSprite = new PIXI.Sprite();
+    panable(this.interceptingSprite);
     this.interceptingSprite.alpha = 0;
     this.interceptingSprite.interactive = true;
     this.pointerPathCoordinates = null;
+    this.interceptingSprite.addEventListener('panmove', (event: PanMoveEvent) =>
+      this.onPanMove(
+        event.deltaX,
+        event.deltaY,
+        event.data.global.x,
+        event.data.global.y
+      )
+    );
+
     this.interceptingSprite.addEventListener(
       'pointerdown',
       (e: PIXI.FederatedPointerEvent) => {
@@ -43,6 +66,8 @@ class ClickInterceptor {
             this.pointerPathCoordinates = null;
             return;
           }
+        } else if (e.pointerType === 'mouse') {
+          if (e.button !== 0) return;
         }
         this._startClickInterception(
           e.originalEvent.globalX,
@@ -58,6 +83,8 @@ class ClickInterceptor {
           if (this._touchingPointerIds.size === 0) {
             this._cancelUntilNoMoreTouches = false;
           }
+        } else if (e.pointerType === 'mouse') {
+          if (e.button !== 0) return;
         }
         this._endClickInterception();
       }
@@ -115,6 +142,7 @@ class ClickInterceptor {
 
   _interceptPointerMove(deviceX: number, deviceY: number) {
     if (this._shouldCancelClick || this._cancelUntilNoMoreTouches) return;
+    this.onInterceptPointerMove();
     const pointerPathCoordinates = this.pointerPathCoordinates;
     if (!pointerPathCoordinates) return;
 

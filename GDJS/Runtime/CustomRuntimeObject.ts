@@ -4,6 +4,8 @@
  * This project is released under the MIT License.
  */
 namespace gdjs {
+  const logger = new gdjs.Logger('CustomRuntimeObject');
+
   export type ObjectConfiguration = {
     content: any;
   };
@@ -11,24 +13,6 @@ namespace gdjs {
   export type CustomObjectConfiguration = ObjectConfiguration & {
     animatable?: SpriteAnimationData[];
     childrenContent: { [objectName: string]: ObjectConfiguration & any };
-    instances: InstanceData[];
-    layers: LayerData[];
-    // The flat representation of defaultSize.
-    areaMinX: float;
-    areaMinY: float;
-    areaMinZ: float;
-    areaMaxX: float;
-    areaMaxY: float;
-    areaMaxZ: float;
-    /**
-     * A value shared by every object instances.
-     *
-     * @see gdjs.CustomRuntimeObject._forcedDefaultSize
-     **/
-    defaultSize: {
-      min: [float, float, float];
-      max: [float, float, float];
-    } | null;
   };
 
   /**
@@ -56,14 +40,21 @@ namespace gdjs {
     /** The dimension of this object is calculated from its children AABBs. */
     private _unrotatedAABB: AABB = { min: [0, 0], max: [0, 0] };
     /**
-     * The default size defined by users in the custom object initial instances editor.
-     *
-     * Don't modify it as it would affect every instance.
+     * The bounds of the object content before any transformation.
+     * @see gdjs.CustomRuntimeObjectInstanceContainer._initialInnerArea
      **/
-    private _forcedDefaultSize: {
+    protected _innerArea: {
       min: [float, float, float];
       max: [float, float, float];
     } | null = null;
+    /**
+     * When the parent dimensions change:
+     * - if `false`, the object is stretch proportionally while children local
+     *   positions stay the same ({@link gdjs.CustomRuntimeObject._innerArea} don't change).
+     * - if `true`, the children local positions need to be adapted by events
+     *   to follow their parent size.
+     */
+    protected _isInnerAreaFollowingParentSize = false;
     private _scaleX: float = 1;
     private _scaleY: float = 1;
     private _flippedX: boolean = false;
@@ -91,11 +82,41 @@ namespace gdjs {
       );
       this._renderer = this._createRender();
 
-      this._createDefaultSizeIfNeeded(objectData);
-      this._instanceContainer.loadFrom(objectData);
+      this._initializeFromObjectData(objectData);
 
       // The generated code calls onCreated at the constructor end
       // and onCreated calls its super implementation at its end.
+    }
+
+    private _initializeFromObjectData(
+      objectData: ObjectData & CustomObjectConfiguration
+    ) {
+      const eventsBasedObjectData = this._runtimeScene
+        .getGame()
+        .getEventsBasedObjectData(objectData.type);
+      if (!eventsBasedObjectData) {
+        logger.error(
+          `A CustomRuntimeObject was initialized (or re-initialized) from object data referring to an non existing events based object data with type "${objectData.type}".`
+        );
+        return;
+      }
+      this._isInnerAreaFollowingParentSize =
+        eventsBasedObjectData.isInnerAreaFollowingParentSize;
+      if (eventsBasedObjectData.instances.length > 0) {
+        if (!this._innerArea) {
+          this._innerArea = {
+            min: [0, 0, 0],
+            max: [0, 0, 0],
+          };
+        }
+        this._innerArea.min[0] = eventsBasedObjectData.areaMinX;
+        this._innerArea.min[1] = eventsBasedObjectData.areaMinY;
+        this._innerArea.min[2] = eventsBasedObjectData.areaMinZ;
+        this._innerArea.max[0] = eventsBasedObjectData.areaMaxX;
+        this._innerArea.max[1] = eventsBasedObjectData.areaMaxY;
+        this._innerArea.max[2] = eventsBasedObjectData.areaMaxZ;
+      }
+      this._instanceContainer.loadFrom(objectData, eventsBasedObjectData);
     }
 
     protected abstract _createRender():
@@ -106,36 +127,11 @@ namespace gdjs {
     reinitialize(objectData: ObjectData & CustomObjectConfiguration) {
       super.reinitialize(objectData);
 
-      this._createDefaultSizeIfNeeded(objectData);
-      this._instanceContainer.loadFrom(objectData);
+      this._initializeFromObjectData(objectData);
       this._reinitializeRenderer();
 
       // The generated code calls the onCreated super implementation at the end.
       this.onCreated();
-    }
-
-    /**
-     * Initialize `defaultSize` if it doesn't exist.
-     * `defaultSize` is shared by every instance to save memory.
-     */
-    private _createDefaultSizeIfNeeded(objectData: CustomObjectConfiguration) {
-      if (objectData.instances.length > 0) {
-        if (!objectData.defaultSize) {
-          objectData.defaultSize = {
-            min: [
-              objectData.areaMinX,
-              objectData.areaMinY,
-              objectData.areaMinZ,
-            ],
-            max: [
-              objectData.areaMaxX,
-              objectData.areaMaxY,
-              objectData.areaMaxZ,
-            ],
-          };
-        }
-        this._forcedDefaultSize = objectData.defaultSize;
-      }
     }
 
     updateFromObjectData(
@@ -149,7 +145,7 @@ namespace gdjs {
           newObjectData.animatable || []
         );
       }
-      return this._instanceContainer.updateFrom(oldObjectData, newObjectData);
+      return true;
     }
 
     extraInitializationFromInitialInstance(initialInstanceData: InstanceData) {
@@ -399,8 +395,8 @@ namespace gdjs {
 
     getDrawableX(): float {
       let minX = 0;
-      if (this._forcedDefaultSize) {
-        minX = this._forcedDefaultSize.min[0];
+      if (this._innerArea) {
+        minX = this._innerArea.min[0];
       } else {
         if (this._isUntransformedHitBoxesDirty) {
           this._updateUntransformedHitBoxes();
@@ -421,8 +417,8 @@ namespace gdjs {
 
     getDrawableY(): float {
       let minY = 0;
-      if (this._forcedDefaultSize) {
-        minY = this._forcedDefaultSize.min[1];
+      if (this._innerArea) {
+        minY = this._innerArea.min[1];
       } else {
         if (this._isUntransformedHitBoxesDirty) {
           this._updateUntransformedHitBoxes();
@@ -442,11 +438,63 @@ namespace gdjs {
     }
 
     /**
+     * @return the internal left bound of the object according to its children.
+     */
+    getInnerAreaMinX(): number {
+      if (this._innerArea) {
+        return this._innerArea.min[0];
+      }
+      if (this._isUntransformedHitBoxesDirty) {
+        this._updateUntransformedHitBoxes();
+      }
+      return this._unrotatedAABB.min[0];
+    }
+
+    /**
+     * @return the internal top bound of the object according to its children.
+     */
+    getInnerAreaMinY(): number {
+      if (this._innerArea) {
+        return this._innerArea.min[1];
+      }
+      if (this._isUntransformedHitBoxesDirty) {
+        this._updateUntransformedHitBoxes();
+      }
+      return this._unrotatedAABB.min[1];
+    }
+
+    /**
+     * @return the internal right bound of the object according to its children.
+     */
+    getInnerAreaMaxX(): number {
+      if (this._innerArea) {
+        return this._innerArea.max[0];
+      }
+      if (this._isUntransformedHitBoxesDirty) {
+        this._updateUntransformedHitBoxes();
+      }
+      return this._unrotatedAABB.max[0];
+    }
+
+    /**
+     * @return the internal bottom bound of the object according to its children.
+     */
+    getInnerAreaMaxY(): number {
+      if (this._innerArea) {
+        return this._innerArea.max[1];
+      }
+      if (this._isUntransformedHitBoxesDirty) {
+        this._updateUntransformedHitBoxes();
+      }
+      return this._unrotatedAABB.max[1];
+    }
+
+    /**
      * @return the internal width of the object according to its children.
      */
     getUnscaledWidth(): float {
-      if (this._forcedDefaultSize) {
-        return this._forcedDefaultSize.max[0] - this._forcedDefaultSize.min[0];
+      if (this._innerArea) {
+        return this._innerArea.max[0] - this._innerArea.min[0];
       }
       if (this._isUntransformedHitBoxesDirty) {
         this._updateUntransformedHitBoxes();
@@ -458,8 +506,8 @@ namespace gdjs {
      * @return the internal height of the object according to its children.
      */
     getUnscaledHeight(): float {
-      if (this._forcedDefaultSize) {
-        return this._forcedDefaultSize.max[1] - this._forcedDefaultSize.min[1];
+      if (this._innerArea) {
+        return this._innerArea.max[1] - this._innerArea.min[1];
       }
       if (this._isUntransformedHitBoxesDirty) {
         this._updateUntransformedHitBoxes();
@@ -474,10 +522,8 @@ namespace gdjs {
       if (this._customCenter) {
         return this._customCenter[0];
       }
-      if (this._forcedDefaultSize) {
-        return (
-          (this._forcedDefaultSize.min[0] + this._forcedDefaultSize.max[0]) / 2
-        );
+      if (this._innerArea) {
+        return (this._innerArea.min[0] + this._innerArea.max[0]) / 2;
       }
       if (this._isUntransformedHitBoxesDirty) {
         this._updateUntransformedHitBoxes();
@@ -492,10 +538,8 @@ namespace gdjs {
       if (this._customCenter) {
         return this._customCenter[1];
       }
-      if (this._forcedDefaultSize) {
-        return (
-          (this._forcedDefaultSize.min[1] + this._forcedDefaultSize.max[1]) / 2
-        );
+      if (this._innerArea) {
+        return (this._innerArea.min[1] + this._innerArea.max[1]) / 2;
       }
       if (this._isUntransformedHitBoxesDirty) {
         this._updateUntransformedHitBoxes();
@@ -553,15 +597,29 @@ namespace gdjs {
 
     setWidth(newWidth: float): void {
       const unscaledWidth = this.getUnscaledWidth();
-      if (unscaledWidth !== 0) {
-        this.setScaleX(newWidth / unscaledWidth);
+      if (unscaledWidth === 0) {
+        return;
+      }
+      const scaleX = newWidth / unscaledWidth;
+      if (this._innerArea && this._isInnerAreaFollowingParentSize) {
+        this._innerArea.min[0] *= scaleX;
+        this._innerArea.max[0] *= scaleX;
+      } else {
+        this.setScaleX(scaleX);
       }
     }
 
     setHeight(newHeight: float): void {
       const unscaledHeight = this.getUnscaledHeight();
-      if (unscaledHeight !== 0) {
-        this.setScaleY(newHeight / unscaledHeight);
+      if (unscaledHeight === 0) {
+        return;
+      }
+      const scaleY = newHeight / unscaledHeight;
+      if (this._innerArea && this._isInnerAreaFollowingParentSize) {
+        this._innerArea.min[1] *= scaleY;
+        this._innerArea.max[1] *= scaleY;
+      } else {
+        this.setScaleY(scaleY);
       }
     }
 
@@ -612,6 +670,10 @@ namespace gdjs {
      * @param newScale The new scale (must be greater than 0).
      */
     setScale(newScale: float): void {
+      if (this._innerArea && this._isInnerAreaFollowingParentSize) {
+        // The scale is always 1;
+        return;
+      }
       if (newScale < 0) {
         newScale = 0;
       }
@@ -634,6 +696,10 @@ namespace gdjs {
      * @param newScale The new scale (must be greater than 0).
      */
     setScaleX(newScale: float): void {
+      if (this._innerArea && this._isInnerAreaFollowingParentSize) {
+        // The scale is always 1;
+        return;
+      }
       if (newScale < 0) {
         newScale = 0;
       }
@@ -652,6 +718,10 @@ namespace gdjs {
      * @param newScale The new scale (must be greater than 0).
      */
     setScaleY(newScale: float): void {
+      if (this._innerArea && this._isInnerAreaFollowingParentSize) {
+        // The scale is always 1;
+        return;
+      }
       if (newScale < 0) {
         newScale = 0;
       }
