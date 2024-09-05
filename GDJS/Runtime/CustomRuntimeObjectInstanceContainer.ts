@@ -4,8 +4,6 @@
  * This project is released under the MIT License.
  */
 namespace gdjs {
-  const logger = new gdjs.Logger('CustomRuntimeObject');
-
   /**
    * The instance container of a custom object, containing instances of objects rendered on screen.
    *
@@ -19,6 +17,17 @@ namespace gdjs {
     /** The object that is built with the instances of this container. */
     _customObject: gdjs.CustomRuntimeObject;
     _isLoaded: boolean = false;
+    /**
+     * The default size defined by users in the custom object initial instances editor.
+     *
+     * Don't modify it as it would affect every instance.
+     *
+     * @see gdjs.CustomRuntimeObject._innerArea
+     **/
+    private _initialInnerArea: {
+      min: [float, float, float];
+      max: [float, float, float];
+    } | null = null;
 
     /**
      * @param parent the parent container that contains the object associated
@@ -54,18 +63,15 @@ namespace gdjs {
      * @param customObjectData An object containing the container data.
      * @see gdjs.RuntimeGame#getSceneAndExtensionsData
      */
-    loadFrom(customObjectData: ObjectData & CustomObjectConfiguration) {
+    loadFrom(
+      customObjectData: ObjectData & CustomObjectConfiguration,
+      eventsBasedObjectData: EventsBasedObjectData
+    ) {
       if (this._isLoaded) {
         this.onDestroyFromScene(this._parent);
       }
 
-      const eventsBasedObjectData = this._runtimeScene
-        .getGame()
-        .getEventsBasedObjectData(customObjectData.type);
-      if (!eventsBasedObjectData) {
-        logger.error('loadFrom was called without an events-based object');
-        return;
-      }
+      this._setOriginalInnerArea(eventsBasedObjectData);
 
       // Registering objects
       for (
@@ -86,10 +92,14 @@ namespace gdjs {
         }
       }
 
-      if (customObjectData.layers.length > 0) {
+      if (eventsBasedObjectData.layers.length > 0) {
         // Load layers
-        for (let i = 0, len = customObjectData.layers.length; i < len; ++i) {
-          this.addLayer(customObjectData.layers[i]);
+        for (
+          let i = 0, len = eventsBasedObjectData.layers.length;
+          i < len;
+          ++i
+        ) {
+          this.addLayer(eventsBasedObjectData.layers[i]);
         }
       } else {
         // Add a default layer
@@ -118,7 +128,7 @@ namespace gdjs {
       }
 
       this.createObjectsFrom(
-        customObjectData.instances,
+        eventsBasedObjectData.instances,
         0,
         0,
         0,
@@ -133,48 +143,29 @@ namespace gdjs {
     }
 
     /**
-     * Called when the container must be updated using the specified
-     * objectData. This is the case during hot-reload, and is only called if
-     * the object was modified.
-     *
-     * @param oldCustomObjectData The previous data for the object.
-     * @param newCustomObjectData The new data for the object.
-     * @returns true if the object was updated, false if it could not
-     * (i.e: hot-reload is not supported).
+     * Initialize `_initialInnerArea` if it doesn't exist.
+     * `_initialInnerArea` is shared by every instance to save memory.
      */
-    updateFrom(
-      oldCustomObjectData: ObjectData & CustomObjectConfiguration,
-      newCustomObjectData: ObjectData & CustomObjectConfiguration
-    ): boolean {
-      const eventsBasedObjectData = this._runtimeScene
-        .getGame()
-        .getEventsBasedObjectData(newCustomObjectData.type);
-      if (!eventsBasedObjectData) {
-        logger.error('updateFrom was called without an events-based object');
-        return false;
-      }
-
-      for (
-        let i = 0, len = eventsBasedObjectData.objects.length;
-        i < len;
-        ++i
-      ) {
-        const childName = eventsBasedObjectData.objects[i].name;
-        const oldChildData = {
-          ...eventsBasedObjectData.objects[i],
-          ...oldCustomObjectData.childrenContent[childName],
-        };
-        const newChildData = {
-          ...eventsBasedObjectData.objects[i],
-          ...newCustomObjectData.childrenContent[childName],
-        };
-        this.updateObject(newChildData);
-
-        for (const child of this.getInstancesOf(childName)) {
-          child.updateFromObjectData(oldChildData, newChildData);
+    private _setOriginalInnerArea(
+      eventsBasedObjectData: EventsBasedObjectData
+    ) {
+      if (eventsBasedObjectData.instances.length > 0) {
+        if (!eventsBasedObjectData._initialInnerArea) {
+          eventsBasedObjectData._initialInnerArea = {
+            min: [
+              eventsBasedObjectData.areaMinX,
+              eventsBasedObjectData.areaMinY,
+              eventsBasedObjectData.areaMinZ,
+            ],
+            max: [
+              eventsBasedObjectData.areaMaxX,
+              eventsBasedObjectData.areaMaxY,
+              eventsBasedObjectData.areaMaxZ,
+            ],
+          };
         }
+        this._initialInnerArea = eventsBasedObjectData._initialInnerArea;
       }
-      return true;
     }
 
     /**
@@ -193,8 +184,10 @@ namespace gdjs {
       for (let i = 0, len = allInstancesList.length; i < len; ++i) {
         const object = allInstancesList[i];
         object.onDeletedFromScene(this);
+        // The object can free all its resource directly...
+        object.onDestroyed();
       }
-
+      // ...as its container cache `_instancesRemoved` is also destroy.
       this._destroy();
 
       this._isLoaded = false;
@@ -295,6 +288,38 @@ namespace gdjs {
 
     getScene() {
       return this._runtimeScene;
+    }
+
+    getUnrotatedViewportMinX(): float {
+      return this._customObject.getInnerAreaMinX();
+    }
+
+    getUnrotatedViewportMinY(): float {
+      return this._customObject.getInnerAreaMinY();
+    }
+
+    getUnrotatedViewportMaxX(): float {
+      return this._customObject.getInnerAreaMaxX();
+    }
+
+    getUnrotatedViewportMaxY(): float {
+      return this._customObject.getInnerAreaMaxY();
+    }
+
+    getInitialUnrotatedViewportMinX(): float {
+      return this._initialInnerArea ? this._initialInnerArea.min[0] : 0;
+    }
+
+    getInitialUnrotatedViewportMinY(): float {
+      return this._initialInnerArea ? this._initialInnerArea.min[1] : 0;
+    }
+
+    getInitialUnrotatedViewportMaxX(): float {
+      return this._initialInnerArea ? this._initialInnerArea.max[0] : 0;
+    }
+
+    getInitialUnrotatedViewportMaxY(): float {
+      return this._initialInnerArea ? this._initialInnerArea.max[1] : 0;
     }
 
     getViewportWidth(): float {

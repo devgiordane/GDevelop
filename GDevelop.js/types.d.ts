@@ -2152,6 +2152,8 @@ export class EventsBasedObject extends AbstractEventsBasedEntity {
   isAnimatable(): boolean;
   markAsTextContainer(isTextContainer: boolean): EventsBasedObject;
   isTextContainer(): boolean;
+  markAsInnerAreaExpandingWithParent(value: boolean): EventsBasedObject;
+  isInnerAreaFollowingParentSize(): boolean;
   getInitialInstances(): InitialInstancesContainer;
   getLayers(): LayersContainer;
   getObjects(): ObjectsContainer;
@@ -2765,6 +2767,7 @@ export class PreviewExportOptions extends EmscriptenObject {
   constructor(project: Project, outputPath: string);
   useWebsocketDebuggerClientWithServerAddress(address: string, port: string): PreviewExportOptions;
   useWindowMessageDebuggerClient(): PreviewExportOptions;
+  useMinimalDebuggerClient(): PreviewExportOptions;
   setLayoutName(layoutName: string): PreviewExportOptions;
   setFallbackAuthor(id: string, username: string): PreviewExportOptions;
   setAuthenticatedPlayer(playerId: string, playerUsername: string, playerToken: string): PreviewExportOptions;
@@ -2778,6 +2781,11 @@ export class PreviewExportOptions extends EmscriptenObject {
   setElectronRemoteRequirePath(electronRemoteRequirePath: string): PreviewExportOptions;
   setGDevelopResourceToken(gdevelopResourceToken: string): PreviewExportOptions;
   setAllowAuthenticationUsingIframeForPreview(enable: boolean): PreviewExportOptions;
+  setCrashReportUploadLevel(crashReportUploadLevel: string): PreviewExportOptions;
+  setPreviewContext(previewContext: string): PreviewExportOptions;
+  setGDevelopVersionWithHash(gdevelopVersionWithHash: string): PreviewExportOptions;
+  setProjectTemplateSlug(projectTemplateSlug: string): PreviewExportOptions;
+  setSourceGameId(sourceGameId: string): PreviewExportOptions;
 }
 
 export class ExportOptions extends EmscriptenObject {

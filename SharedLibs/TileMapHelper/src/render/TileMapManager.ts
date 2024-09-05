@@ -131,14 +131,11 @@ export class TileMapManager {
     // TODO: Is it useful to cache the tilemap since it belongs to an instance?
     // const key = `${objectName}|${tileSize}|${tileSetColumnCount}|${tileSetRowCount}`;
 
-    const editableTileMap = EditableTileMap.from(
-      tileMapAsJsObject,
-      {
-        tileSize,
-        tileSetColumnCount,
-        tileSetRowCount,
-      },
-    );
+    const editableTileMap = EditableTileMap.from(tileMapAsJsObject, {
+      tileSize,
+      tileSetColumnCount,
+      tileSetRowCount,
+    });
     callback(editableTileMap);
   }
 
@@ -224,9 +221,12 @@ export class TileMapManager {
     this._textureCacheCaches.getOrLoad(
       key,
       (textureCacheLoadingCallback) => {
-        const atlasTexture = atlasImageResourceName
-          ? getTexture(atlasImageResourceName)
-          : null;
+        if (!atlasImageResourceName) {
+          textureCacheLoadingCallback(null);
+          return;
+        }
+
+        const atlasTexture = getTexture(atlasImageResourceName);
         const textureCache = PixiTileMapHelper.parseSimpleTileMapAtlas(
           atlasTexture,
           columnCount,
